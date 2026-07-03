@@ -134,7 +134,7 @@ handleSuccessfulCompile serverDir controller serverStateRef nextServerProcessIdR
           startServerProcess serverDir controller serverStateRef nextServerProcessIdRef chan
         ExitFailure {} -> stopServerFromStateRef serverStateRef
 
-bundleServer :: Path' Abs (Dir ServerRootDir) -> Chan J.JobMessage -> IO ExitCode
+bundleServer :: Path' Abs (Dir ServerRootDir) -> J.JobOutputStreamer
 bundleServer serverDir =
   runNodeCommandAndStreamOutputWithExtraEnv [] serverDir "npm" ["run", "bundle"] J.Server
 

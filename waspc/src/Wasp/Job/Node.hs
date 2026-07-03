@@ -14,7 +14,7 @@ import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import qualified System.Process as P
 import qualified Wasp.Job as J
-import Wasp.Job.Process (emitJobExitOnCompletion, runProcessAndStreamOutput)
+import Wasp.Job.Process (runProcessAndStreamOutput)
 import qualified Wasp.Node.Version as NodeVersion
 
 runNodeCommandAsJob :: Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
@@ -22,10 +22,10 @@ runNodeCommandAsJob = runNodeCommandAsJobWithExtraEnv []
 
 runNodeCommandAsJobWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
 runNodeCommandAsJobWithExtraEnv extraEnvVars fromDir command args jobType =
-  emitJobExitOnCompletion jobType $
+  J.makeJob jobType $
     runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType
 
-runNodeCommandAndStreamOutputWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
+runNodeCommandAndStreamOutputWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.JobOutputStreamer
 runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType chan =
   makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args >>= \case
     Left errorMsg -> writeErrorOutput (ExitFailure 1) (T.pack errorMsg)

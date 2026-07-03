@@ -1,7 +1,6 @@
 module Wasp.Job.Process
   ( runProcessAndStreamOutput,
     runProcessAsJob,
-    emitJobExitOnCompletion,
   )
 where
 
@@ -23,11 +22,11 @@ import qualified Wasp.Job as J
 -- | Runs a top-level job and emits 'JobExit' when it finishes.
 -- Internal child processes should use 'runProcessAndStreamOutput' instead.
 runProcessAsJob :: P.CreateProcess -> J.JobType -> J.Job
-runProcessAsJob process jobType = emitJobExitOnCompletion jobType $ runProcessAndStreamOutput process jobType
+runProcessAsJob process jobType = J.makeJob jobType $ runProcessAndStreamOutput process jobType
 
 -- | Runs a child process and streams its output without emitting 'JobExit'.
 -- Use 'runProcessAsJob' for top-level jobs that should signal completion to job readers.
-runProcessAndStreamOutput :: P.CreateProcess -> J.JobType -> J.Job
+runProcessAndStreamOutput :: P.CreateProcess -> J.JobType -> J.JobOutputStreamer
 runProcessAndStreamOutput process jobType chan =
   bracket
     (CP.streamingProcess process)
@@ -79,15 +78,3 @@ runProcessAndStreamOutput process jobType chan =
             Just _ -> return ()
             Nothing -> P.terminateProcess processHandle
         else P.interruptProcessGroupOf processHandle
-
-emitJobExitOnCompletion :: J.JobType -> J.Job -> J.Job
-emitJobExitOnCompletion jobType job chan = do
-  exitCode <- job chan
-
-  writeChan chan $
-    J.JobMessage
-      { J._data = J.JobExit exitCode,
-        J._jobType = jobType
-      }
-
-  return exitCode
