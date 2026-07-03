@@ -1,9 +1,9 @@
-module Wasp.Job.Process.Managed
-  ( ManagedProcess,
-    getManagedProcessExitCode,
-    startManagedProcess,
-    stopManagedProcess,
-    waitForManagedProcess,
+module Wasp.Job.Process.LongRunning
+  ( LongRunningProcess,
+    getExitCode,
+    start,
+    stop,
+    wait,
   )
 where
 
@@ -20,19 +20,19 @@ import qualified System.Info
 import qualified System.Process as P
 import qualified Wasp.Job as J
 
-data ManagedProcess = ManagedProcess
-  { waitForManagedProcess :: IO ExitCode,
-    stopManagedProcess :: IO (),
-    getManagedProcessExitCode :: IO (Maybe ExitCode)
+data LongRunningProcess = LongRunningProcess
+  { wait :: IO ExitCode,
+    stop :: IO (),
+    getExitCode :: IO (Maybe ExitCode)
   }
 
--- Managed processes are Wasp-owned children that don't read from stdin.
--- That lets us close stdin, isolate the process tree on Unix with create_group,
--- and use Windows process jobs so ProcessHandle operations can cover children.
+-- Long-running processes are Wasp-owned children started now and stopped later.
+-- They forward output to the job channel, but don't emit JobExit.
+-- They don't read stdin, so we can isolate and stop the whole process tree.
 -- We still pipe and drain stdout/stderr: System.Process documents NoStream as
 -- unsafe for output when the child writes to the closed file descriptor.
-configureManagedProcess :: P.CreateProcess -> P.CreateProcess
-configureManagedProcess process =
+configureLongRunningProcess :: P.CreateProcess -> P.CreateProcess
+configureLongRunningProcess process =
   process
     { P.create_group = System.Info.os /= "mingw32",
       P.use_process_jobs = System.Info.os == "mingw32",
@@ -41,9 +41,9 @@ configureManagedProcess process =
       P.std_err = P.CreatePipe
     }
 
-startManagedProcess :: P.CreateProcess -> J.JobType -> Chan J.JobMessage -> IO ManagedProcess
-startManagedProcess process jobType chan = do
-  (maybeStdin, maybeStdout, maybeStderr, processHandle) <- P.createProcess $ configureManagedProcess process
+start :: P.CreateProcess -> J.JobType -> Chan J.JobMessage -> IO LongRunningProcess
+start process jobType chan = do
+  (maybeStdin, maybeStdout, maybeStderr, processHandle) <- P.createProcess $ configureLongRunningProcess process
   maybeProcessGroupPid <- fmap show <$> P.getPid processHandle
   stdoutAsync <- async $ forwardOutput chan jobType maybeStdout J.Stdout
   stderrAsync <- async $ forwardOutput chan jobType maybeStderr J.Stderr
@@ -61,10 +61,10 @@ startManagedProcess process jobType chan = do
         cancel stdoutAsync
         cancel stderrAsync
   return $
-    ManagedProcess
-      { waitForManagedProcess = waitForProcessAndOutput,
-        stopManagedProcess = stopProcessAndOutput,
-        getManagedProcessExitCode = P.getProcessExitCode processHandle
+    LongRunningProcess
+      { wait = waitForProcessAndOutput,
+        stop = stopProcessAndOutput,
+        getExitCode = P.getProcessExitCode processHandle
       }
 
 waitForOutput :: Async a -> IO ()

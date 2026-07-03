@@ -347,7 +347,7 @@ library
     Wasp.Job.IO.PrefixedWriter
     Wasp.Job.Node
     Wasp.Job.Process
-    Wasp.Job.Process.Managed
+    Wasp.Job.Process.LongRunning
     Wasp.JsImport
     Wasp.Message
     Wasp.Node.Internal
@@ -615,7 +615,7 @@ test-suite waspc-tests
     Generator.JsImportTest
     Generator.MockWriteableMonad
     Generator.WriteFileDraftsTest
-    Job.Process.ManagedTest
+    Job.Process.LongRunningTest
     JsImportTest
     Node.InternalTest
     Paths_waspc

@@ -19,13 +19,7 @@ import Wasp.Generator.Common (GeneratedAppDir, ServerRootDir)
 import qualified Wasp.Generator.ServerGenerator.Common as Common
 import qualified Wasp.Job as J
 import Wasp.Job.Node (makeNodeCommandProcessWithExtraEnv, runNodeCommandAndStreamOutputWithExtraEnv)
-import Wasp.Job.Process.Managed
-  ( ManagedProcess,
-    getManagedProcessExitCode,
-    startManagedProcess,
-    stopManagedProcess,
-    waitForManagedProcess,
-  )
+import qualified Wasp.Job.Process.LongRunning as LongRunning
 
 newtype ServerProcessController = ServerProcessController (Chan ServerControllerCommand)
 
@@ -43,7 +37,7 @@ newtype ServerProcessId = ServerProcessId Int deriving (Eq)
 
 data ServerProcess = ServerProcess
   { _serverProcessId :: ServerProcessId,
-    _managedProcess :: ManagedProcess
+    _longRunningProcess :: LongRunning.LongRunningProcess
   }
 
 data ServerProcessState
@@ -152,10 +146,10 @@ startServerProcess serverDir controller serverStateRef nextServerProcessIdRef ch
       atomicWriteIORef serverStateRef ServerNotRunning
     Right serverProcess -> mask_ $ do
       serverProcessId <- getNextServerProcessId nextServerProcessIdRef
-      managedProcess <- startManagedProcess serverProcess J.Server chan
-      atomicWriteIORef serverStateRef $ ServerRunning ServerProcess {_serverProcessId = serverProcessId, _managedProcess = managedProcess}
+      longRunningProcess <- LongRunning.start serverProcess J.Server chan
+      atomicWriteIORef serverStateRef $ ServerRunning ServerProcess {_serverProcessId = serverProcessId, _longRunningProcess = longRunningProcess}
       _ <- async $ do
-        exitCode <- waitForManagedProcess managedProcess
+        exitCode <- LongRunning.wait longRunningProcess
         writeServerControllerCommand controller $ ServerProcessExited serverProcessId exitCode
       return ()
 
@@ -171,7 +165,7 @@ stopServerFromStateRef serverStateRef = mask_ $ do
   case serverState of
     ServerNotRunning -> return ()
     ServerRunning serverProcess -> do
-      stopManagedProcess $ _managedProcess serverProcess
+      LongRunning.stop $ _longRunningProcess serverProcess
       atomicWriteIORef serverStateRef ServerNotRunning
 
 syncServerState :: IORef ServerProcessState -> Chan J.JobMessage -> IO ()
@@ -180,7 +174,7 @@ syncServerState serverStateRef chan = do
   case serverState of
     ServerNotRunning -> return ()
     ServerRunning serverProcess ->
-      getManagedProcessExitCode (_managedProcess serverProcess) >>= \case
+      LongRunning.getExitCode (_longRunningProcess serverProcess) >>= \case
         Nothing -> return ()
         Just exitCode -> do
           atomicWriteIORef serverStateRef ServerNotRunning

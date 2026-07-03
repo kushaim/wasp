@@ -1,4 +1,4 @@
-module Job.Process.ManagedTest where
+module Job.Process.LongRunningTest where
 
 import Control.Concurrent (newChan, threadDelay)
 import Control.Exception (finally)
@@ -12,29 +12,29 @@ import System.Info (os)
 import qualified System.Process as P
 import Test.Hspec (Spec, describe, expectationFailure, it, shouldReturn, shouldSatisfy)
 import qualified Wasp.Job as J
-import Wasp.Job.Process.Managed (getManagedProcessExitCode, startManagedProcess, stopManagedProcess)
+import qualified Wasp.Job.Process.LongRunning as LongRunning
 
-spec_ManagedProcess :: Spec
-spec_ManagedProcess =
+spec_LongRunningProcess :: Spec
+spec_LongRunningProcess =
   if os == "mingw32"
     then return ()
-    else describe "ManagedProcess" $ do
+    else describe "LongRunningProcess" $ do
       it "kills process-group descendants after the root process exits" $ do
         (pidFilePath, pidFileHandle) <- openTempFile "/tmp" "wasp-managed-child.pid"
         hClose pidFileHandle
         removeFile pidFilePath
 
         chan <- newChan
-        managedProcess <- startManagedProcess (P.proc "sh" ["-c", childProcessScript pidFilePath]) J.Server chan
-        let cleanup = stopManagedProcess managedProcess >> removeFileIfExists pidFilePath
+        longRunningProcess <- LongRunning.start (P.proc "sh" ["-c", childProcessScript pidFilePath]) J.Server chan
+        let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists pidFilePath
         ( do
             waitUntil "child pid file" $ doesFileExist pidFilePath
             childPid <- readFile pidFilePath
-            waitUntil "root process exit" $ isJust <$> getManagedProcessExitCode managedProcess
+            waitUntil "root process exit" $ isJust <$> LongRunning.getExitCode longRunningProcess
             isProcessAlive childPid `shouldReturn` True
 
             startedAt <- getCurrentTime
-            stopManagedProcess managedProcess
+            LongRunning.stop longRunningProcess
             stoppedAt <- getCurrentTime
 
             realToFrac (stoppedAt `diffUTCTime` startedAt) `shouldSatisfy` (< (2 :: Double))

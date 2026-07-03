@@ -71,7 +71,7 @@ runProcessAndStreamOutput process jobType chan =
       -- better than terminating only the root process, even if the root process already
       -- exited. On Windows, interruptProcessGroupOf requires create_group=True, which
       -- this generic runner intentionally avoids because some top-level jobs inherit
-      -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.Managed instead.
+      -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.LongRunning instead.
       if System.Info.os == "mingw32"
         then
           P.getProcessExitCode processHandle >>= \case
