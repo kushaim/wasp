@@ -14,8 +14,16 @@ import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import qualified System.Process as P
 import qualified Wasp.Job as J
-import Wasp.Job.Process (runProcessAndStreamOutput)
+import Wasp.Job.Process (emitJobExitOnCompletion, runProcessAndStreamOutput)
 import qualified Wasp.Node.Version as NodeVersion
+
+runNodeCommandAsJob :: Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
+runNodeCommandAsJob = runNodeCommandAsJobWithExtraEnv []
+
+runNodeCommandAsJobWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
+runNodeCommandAsJobWithExtraEnv extraEnvVars fromDir command args jobType =
+  emitJobExitOnCompletion jobType $
+    runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType
 
 runNodeCommandAndStreamOutputWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
 runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType chan =
@@ -30,19 +38,6 @@ runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobT
             J._jobType = jobType
           }
       return exitCode
-
-runNodeCommandAsJob :: Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
-runNodeCommandAsJob = runNodeCommandAsJobWithExtraEnv []
-
-runNodeCommandAsJobWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
-runNodeCommandAsJobWithExtraEnv extraEnvVars fromDir command args jobType chan = do
-  exitCode <- runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType chan
-  writeChan chan $
-    J.JobMessage
-      { J._data = J.JobExit exitCode,
-        J._jobType = jobType
-      }
-  return exitCode
 
 makeNodeCommandProcessWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> IO (Either String P.CreateProcess)
 makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args =

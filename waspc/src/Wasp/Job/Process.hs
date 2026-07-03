@@ -1,6 +1,7 @@
 module Wasp.Job.Process
   ( runProcessAndStreamOutput,
     runProcessAsJob,
+    emitJobExitOnCompletion,
   )
 where
 
@@ -19,16 +20,18 @@ import qualified Wasp.Job as J
 --   Switch from Data.Conduit.Process to Data.Conduit.Process.Typed.
 --   It is a new module meant to replace Data.Conduit.Process which is about to become deprecated.
 
+-- | Runs a top-level job and emits 'JobExit' when it finishes.
+-- Internal child processes should use 'runProcessAndStreamOutput' instead.
+runProcessAsJob :: P.CreateProcess -> J.JobType -> J.Job
+runProcessAsJob process jobType = emitJobExitOnCompletion jobType $ runProcessAndStreamOutput process jobType
+
 -- | Runs a child process and streams its output without emitting 'JobExit'.
 -- Use 'runProcessAsJob' for top-level jobs that should signal completion to job readers.
 runProcessAndStreamOutput :: P.CreateProcess -> J.JobType -> J.Job
-runProcessAndStreamOutput = runProcessAndStreamOutputWithCleanup terminateStreamingProcess
-
-runProcessAndStreamOutputWithCleanup :: (CP.StreamingProcessHandle -> IO ()) -> P.CreateProcess -> J.JobType -> J.Job
-runProcessAndStreamOutputWithCleanup cleanup process jobType chan =
+runProcessAndStreamOutput process jobType chan =
   bracket
     (CP.streamingProcess process)
-    (\(_, _, _, sph) -> cleanup sph)
+    (\(_, _, _, sph) -> terminateStreamingProcess sph)
     runStreamingProcessAndStreamOutput
   where
     runStreamingProcessAndStreamOutput (CP.Inherited, stdoutStream, stderrStream, processHandle) = do
@@ -61,27 +64,25 @@ runProcessAndStreamOutputWithCleanup cleanup process jobType chan =
           *> Concurrently forwardStderrToChan
           *> Concurrently (CP.waitForStreamingProcess processHandle)
 
-terminateStreamingProcess :: CP.StreamingProcessHandle -> IO ()
-terminateStreamingProcess streamingProcessHandle = do
-  let processHandle = CP.streamingProcessHandleRaw streamingProcessHandle
-  -- Many commands we run spawn child processes, which can spawn their own children.
-  -- On Unix, interrupting the process group preserves the existing cleanup policy
-  -- better than terminating only the root process, even if the root process already
-  -- exited. On Windows, interruptProcessGroupOf requires create_group=True, which
-  -- this generic runner intentionally avoids because some top-level jobs inherit
-  -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.Managed instead.
-  if System.Info.os == "mingw32"
-    then
-      P.getProcessExitCode processHandle >>= \case
-        Just _ -> return ()
-        Nothing -> P.terminateProcess processHandle
-    else P.interruptProcessGroupOf processHandle
+    terminateStreamingProcess :: CP.StreamingProcessHandle -> IO ()
+    terminateStreamingProcess streamingProcessHandle = do
+      let processHandle = CP.streamingProcessHandleRaw streamingProcessHandle
+      -- Many commands we run spawn child processes, which can spawn their own children.
+      -- On Unix, interrupting the process group preserves the existing cleanup policy
+      -- better than terminating only the root process, even if the root process already
+      -- exited. On Windows, interruptProcessGroupOf requires create_group=True, which
+      -- this generic runner intentionally avoids because some top-level jobs inherit
+      -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.Managed instead.
+      if System.Info.os == "mingw32"
+        then
+          P.getProcessExitCode processHandle >>= \case
+            Just _ -> return ()
+            Nothing -> P.terminateProcess processHandle
+        else P.interruptProcessGroupOf processHandle
 
--- | Runs a top-level job and emits 'JobExit' when it finishes.
--- Internal child processes should use 'runProcessAndStreamOutput' instead.
-runProcessAsJob :: P.CreateProcess -> J.JobType -> J.Job
-runProcessAsJob process jobType chan = do
-  exitCode <- runProcessAndStreamOutput process jobType chan
+emitJobExitOnCompletion :: J.JobType -> J.Job -> J.Job
+emitJobExitOnCompletion jobType job chan = do
+  exitCode <- job chan
 
   writeChan chan $
     J.JobMessage
