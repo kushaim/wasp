@@ -64,8 +64,7 @@ start = do
             { _onSuccessfulCompile = \watchCompileResult -> do
                 let serverRuntimeInputChange = classifyServerRuntimeInputChange watchCompileResult
                 when (serverRuntimeInputChange == ServerGenerator.Start.ServerRuntimeInputMightHaveChanged) $
-                  cliSendMessage $
-                    Msg.Start "Updating server..."
+                  cliSendMessage (Msg.Start "Updating server...")
                 ServerGenerator.Start.notifySuccessfulCompile serverProcessController serverRuntimeInputChange,
               _onFailedCompile = const $ ServerGenerator.Start.notifyFailedCompile serverProcessController
             }
