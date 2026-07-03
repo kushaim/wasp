@@ -20,26 +20,13 @@ import qualified System.Info
 import qualified System.Process as P
 import qualified Wasp.Job as J
 
+-- Long-running processes are Wasp-owned children started now and stopped later.
+-- They forward output to the job channel, but don't emit JobExit.
 data LongRunningProcess = LongRunningProcess
   { wait :: IO ExitCode,
     stop :: IO (),
     getExitCode :: IO (Maybe ExitCode)
   }
-
--- Long-running processes are Wasp-owned children started now and stopped later.
--- They forward output to the job channel, but don't emit JobExit.
--- They don't read stdin, so we can isolate and stop the whole process tree.
--- We still pipe and drain stdout/stderr: System.Process documents NoStream as
--- unsafe for output when the child writes to the closed file descriptor.
-configureLongRunningProcess :: P.CreateProcess -> P.CreateProcess
-configureLongRunningProcess process =
-  process
-    { P.create_group = System.Info.os /= "mingw32",
-      P.use_process_jobs = System.Info.os == "mingw32",
-      P.std_in = P.NoStream,
-      P.std_out = P.CreatePipe,
-      P.std_err = P.CreatePipe
-    }
 
 start :: P.CreateProcess -> J.JobType -> Chan J.JobMessage -> IO LongRunningProcess
 start process jobType chan = do
@@ -67,6 +54,20 @@ start process jobType chan = do
         getExitCode = P.getProcessExitCode processHandle
       }
 
+configureLongRunningProcess :: P.CreateProcess -> P.CreateProcess
+configureLongRunningProcess process =
+  process
+    { P.create_group = System.Info.os /= "mingw32",
+      P.use_process_jobs = System.Info.os == "mingw32",
+      -- Long-running processes don't read stdin, so we can isolate and stop
+      -- the whole process tree.
+      -- We still pipe and drain stdout/stderr: System.Process documents NoStream as
+      -- unsafe for output when the child writes to the closed file descriptor.
+      P.std_in = P.NoStream,
+      P.std_out = P.CreatePipe,
+      P.std_err = P.CreatePipe
+    }
+
 waitForOutput :: Async a -> IO ()
 waitForOutput outputAsync = void $ waitCatch outputAsync
 
@@ -93,18 +94,13 @@ closeHandleIfOpen (Just handle) = void (try $ hClose handle :: IO (Either SomeEx
 stopProcessTree :: P.ProcessHandle -> Maybe String -> IO ()
 stopProcessTree processHandle maybeProcessGroupPid = do
   -- First ask the tree to stop, then escalate if it doesn't release resources
-  -- such as the dev server port in time.
+  -- in time e.g. a dev server port.
   interruptProcessTree processHandle maybeProcessGroupPid
   void $ waitForExit processHandle gracefulStopTimeoutMicroseconds
   -- The root process can exit before its descendants, so root exit isn't enough
   -- proof that the server port was released.
   terminateProcessTree processHandle maybeProcessGroupPid
   void $ waitForExit processHandle hardStopTimeoutMicroseconds
-
-isProcessRunning :: P.ProcessHandle -> IO Bool
-isProcessRunning processHandle = do
-  maybeExitCode <- P.getProcessExitCode processHandle
-  return $ isNothing maybeExitCode
 
 waitForExit :: P.ProcessHandle -> Int -> IO Bool
 waitForExit processHandle timeoutMicroseconds = waitForExitOrTimeout timeoutMicroseconds
@@ -147,6 +143,11 @@ signalProcessGroup signal pid = do
   case signalResult :: Either SomeException (ExitCode, String, String) of
     Left _ -> return ()
     Right _ -> return ()
+
+isProcessRunning :: P.ProcessHandle -> IO Bool
+isProcessRunning processHandle = do
+  maybeExitCode <- P.getProcessExitCode processHandle
+  return $ isNothing maybeExitCode
 
 gracefulStopTimeoutMicroseconds :: Int
 gracefulStopTimeoutMicroseconds = secondsInMicroseconds `div` 4
