@@ -140,7 +140,7 @@ readChecksumFile dstDir = do
   return $ do
     contents <- maybeContents
     typeAndPathAndChecksums <- Aeson.decode contents :: Maybe [((String, FilePath), Checksum)]
-    mapM (\(typeAndPath, checksum) -> (,checksum) <$> fromTypeAndPathToSp typeAndPath) typeAndPathAndChecksums
+    sequence $ (\(typeAndPath, checksum) -> (,checksum) <$> fromTypeAndPathToSp typeAndPath) <$> typeAndPathAndChecksums
   where
     checksumFP = SP.fromAbsFile $ dstDir </> checksumFileInProjectRoot
 

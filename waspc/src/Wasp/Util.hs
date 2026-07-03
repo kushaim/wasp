@@ -311,8 +311,8 @@ naiveTrimJSON textContainingJson =
 textToLazyBS :: Text -> BSL.ByteString
 textToLazyBS = TLE.encodeUtf8 . TL.fromStrict
 
-secondsToMicroSeconds :: Int -> Int
-secondsToMicroSeconds = (* 1000000)
+secondsToMicroSeconds :: Double -> Int
+secondsToMicroSeconds seconds = round $ seconds * 1000000
 
 isWindows :: Bool
 isWindows = System.Info.os == "mingw32"

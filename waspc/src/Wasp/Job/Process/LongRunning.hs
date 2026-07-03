@@ -7,7 +7,7 @@ module Wasp.Job.Process.LongRunning
   )
 where
 
-import Control.Concurrent (Chan, threadDelay, writeChan)
+import Control.Concurrent (Chan, threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, waitCatch)
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, void, when)
@@ -20,7 +20,7 @@ import System.Exit (ExitCode)
 import System.IO (Handle, hClose)
 import qualified System.Process as P
 import qualified Wasp.Job as J
-import Wasp.Util (isWindows)
+import Wasp.Util (isWindows, secondsToMicroSeconds)
 
 -- Long-running processes are Wasp-owned children started now and stopped later.
 -- They forward output to the job channel, but don't emit JobExit.
@@ -52,11 +52,7 @@ start process jobType chan = do
         cancel stderrAsync
         closeHandles
         unless rootProcessExited $
-          writeChan chan $
-            J.JobMessage
-              { J._data = J.JobOutput "Process did not stop after a kill signal; it may still be running.\n" J.Stderr,
-                J._jobType = jobType
-              }
+          J.writeJobOutput jobType J.Stderr "Process did not stop after a kill signal; it may still be running.\n" chan
   return $
     LongRunningProcess
       { wait = waitForProcessAndOutput,
@@ -93,11 +89,7 @@ forwardOutput chan jobType (Just handle) outputType =
       unless (BS.null chunk) $ do
         let Some output _ decodeNextChunk = decodeChunk chunk
         unless (T.null output) $
-          writeChan chan $
-            J.JobMessage
-              { J._data = J.JobOutput output outputType,
-                J._jobType = jobType
-              }
+          J.writeJobOutput jobType outputType output chan
         forwardChunks decodeNextChunk
 
     chunkSizeInBytes = 4096
@@ -165,13 +157,10 @@ isProcessRunning processHandle = do
   return $ isNothing maybeExitCode
 
 gracefulStopTimeoutMicroseconds :: Int
-gracefulStopTimeoutMicroseconds = secondsInMicroseconds `div` 4
+gracefulStopTimeoutMicroseconds = secondsToMicroSeconds 0.25
 
 hardStopTimeoutMicroseconds :: Int
-hardStopTimeoutMicroseconds = 5 * secondsInMicroseconds
+hardStopTimeoutMicroseconds = secondsToMicroSeconds 5
 
 pollIntervalMicroseconds :: Int
-pollIntervalMicroseconds = secondsInMicroseconds `div` 10
-
-secondsInMicroseconds :: Int
-secondsInMicroseconds = 1000000
+pollIntervalMicroseconds = secondsToMicroSeconds 0.1

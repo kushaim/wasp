@@ -2,6 +2,7 @@ module Wasp.Job
   ( Job,
     JobOutputStreamer,
     makeJob,
+    writeJobOutput,
     JobMessage (..),
     JobMessageData (..),
     JobOutputType (..),
@@ -34,6 +35,14 @@ emitJobExit jobType chan exitCode = do
         _jobType = jobType
       }
   return exitCode
+
+writeJobOutput :: JobType -> JobOutputType -> Text -> Chan JobMessage -> IO ()
+writeJobOutput jobType outputType output chan =
+  writeChan chan $
+    JobMessage
+      { _data = JobOutput output outputType,
+        _jobType = jobType
+      }
 
 data JobMessage = JobMessage
   { _data :: JobMessageData,

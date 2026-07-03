@@ -14,7 +14,6 @@ import Wasp.Cli.Command.Compile (compile)
 import Wasp.Cli.Command.Message (cliSendMessageC)
 import Wasp.Cli.Command.Require (InWaspProject (InWaspProject), require)
 import Wasp.Cli.Command.Watch (WatchCompileHooks (..), watch)
-import Wasp.Cli.Message (cliSendMessage)
 import qualified Wasp.Generator
 import qualified Wasp.Message as Msg
 import Wasp.Project.Common
@@ -43,7 +42,7 @@ watchAndTest testRunner = do
     ongoingCompilationResultMVar <- newMVar (warnings, [])
     let watchCompileHooks =
           WatchCompileHooks
-            { _onSuccessfulCompile = const $ cliSendMessage $ Msg.Success "Recompilation on file change succeeded.",
+            { _onSuccessfulCompile = const $ return (),
               _onFailedCompile = const $ return ()
             }
     let watchWaspProjectSource = watch waspRoot outDir ongoingCompilationResultMVar watchCompileHooks

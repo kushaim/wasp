@@ -27,8 +27,6 @@ newtype ProjectFileChange = ProjectFileChange
   { _projectFileChangePath :: FilePath
   }
 
-newtype ChangeBatch = ChangeBatch [ProjectFileChange]
-
 data WatchCompileHooks = WatchCompileHooks
   { _onSuccessfulCompile :: WatchCompileResult -> IO (),
     _onFailedCompile :: WatchCompileResult -> IO ()
@@ -90,9 +88,9 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
           listenForEvents chan lastCompileTime
         else do
           -- Recompile, but only after a 1s period of no new events.
-          changeBatch <- collectChangeBatchUntilQuiet chan lastCompileTime 1 event
+          fileChanges <- collectFileChangesUntilQuiet chan lastCompileTime 1 event
           currentTime <- getCurrentTime
-          compileResult <- recompile changeBatch
+          compileResult <- recompile fileChanges
           let (warnings, errors) = compileResultWarningsAndErrors compileResult
           updateOngoingCompilationResultMVar (warnings, errors)
           listenForEvents chan currentTime
@@ -111,22 +109,19 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
 
     -- Collects events until no new events are received for a duration of `secondsToDelay`.
     -- If a stale event arrives during an active timer window, we immediately return control to the caller.
-    collectChangeBatchUntilQuiet :: Chan FSN.Event -> UTCTime -> Int -> FSN.Event -> IO ChangeBatch
-    collectChangeBatchUntilQuiet chan lastCompileTime secondsToDelay firstEvent =
+    collectFileChangesUntilQuiet :: Chan FSN.Event -> UTCTime -> Int -> FSN.Event -> IO [ProjectFileChange]
+    collectFileChangesUntilQuiet chan lastCompileTime secondsToDelay firstEvent =
       collectEvents [firstEvent]
       where
         collectEvents events = do
           eventOrDelay <- race (readChan chan) (threadDelaySeconds secondsToDelay)
           case eventOrDelay of
             Left event
-              | isStaleEvent event lastCompileTime -> return $ eventsToChangeBatch events
+              | isStaleEvent event lastCompileTime -> return $ eventToProjectFileChange <$> events
               | otherwise ->
                   -- We have a new event, restart waiting process.
                   collectEvents $ event : events
-            Right () -> return $ eventsToChangeBatch events
-
-    eventsToChangeBatch :: [FSN.Event] -> ChangeBatch
-    eventsToChangeBatch events = ChangeBatch $ eventToProjectFileChange <$> reverse events
+            Right () -> return $ eventToProjectFileChange <$> events
 
     eventToProjectFileChange :: FSN.Event -> ProjectFileChange
     eventToProjectFileChange event =
@@ -139,14 +134,13 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
       let microsecondsInASecond = 1000000
        in threadDelay . (* microsecondsInASecond)
 
-    recompile :: ChangeBatch -> IO CompileResult
-    recompile changeBatch = do
+    recompile :: [ProjectFileChange] -> IO CompileResult
+    recompile fileChanges = do
       cliSendMessage $ Msg.Start "Recompiling on file change..."
       compileResult <- compileIO waspProjectDir outDir
       let (warnings, errors) = compileResultWarningsAndErrors compileResult
 
       printCompilationResult (warnings, errors)
-      let ChangeBatch fileChanges = changeBatch
       let watchCompileResult =
             WatchCompileResult
               { _watchProjectFileChanges = fileChanges,

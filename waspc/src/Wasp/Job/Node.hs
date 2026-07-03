@@ -6,7 +6,6 @@ module Wasp.Job.Node
   )
 where
 
-import Control.Concurrent (writeChan)
 import qualified Data.Text as T
 import StrongPath (Abs, Dir, Path')
 import qualified StrongPath as SP
@@ -32,11 +31,7 @@ runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobT
     Right nodeCommandProcess -> runProcessAndStreamOutput nodeCommandProcess jobType chan
   where
     writeErrorOutput exitCode errorMsg = do
-      writeChan chan $
-        J.JobMessage
-          { J._data = J.JobOutput errorMsg J.Stderr,
-            J._jobType = jobType
-          }
+      J.writeJobOutput jobType J.Stderr errorMsg chan
       return exitCode
 
 makeNodeCommandProcessWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> IO (Either String P.CreateProcess)

@@ -4,7 +4,6 @@ module Wasp.Job.Process
   )
 where
 
-import Control.Concurrent (writeChan)
 import Control.Concurrent.Async (Concurrently (..))
 import Data.Conduit (runConduit, (.|))
 import qualified Data.Conduit.List as CL
@@ -36,27 +35,11 @@ runProcessAndStreamOutput process jobType chan =
     runStreamingProcessAndStreamOutput (CP.Inherited, stdoutStream, stderrStream, processHandle) = do
       let forwardStdoutToChan =
             runConduit $
-              stdoutStream
-                .| CL.mapM_
-                  ( \bs ->
-                      writeChan chan $
-                        J.JobMessage
-                          { J._data = J.JobOutput (decodeUtf8 bs) J.Stdout,
-                            J._jobType = jobType
-                          }
-                  )
+              stdoutStream .| CL.mapM_ (\bs -> J.writeJobOutput jobType J.Stdout (decodeUtf8 bs) chan)
 
       let forwardStderrToChan =
             runConduit $
-              stderrStream
-                .| CL.mapM_
-                  ( \bs ->
-                      writeChan chan $
-                        J.JobMessage
-                          { J._data = J.JobOutput (decodeUtf8 bs) J.Stderr,
-                            J._jobType = jobType
-                          }
-                  )
+              stderrStream .| CL.mapM_ (\bs -> J.writeJobOutput jobType J.Stderr (decodeUtf8 bs) chan)
 
       runConcurrently $
         Concurrently forwardStdoutToChan

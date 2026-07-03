@@ -210,9 +210,4 @@ formatServerProcessExit ExitSuccess = "Server process exited.\n"
 formatServerProcessExit (ExitFailure exitCode) = T.pack $ "Server process exited with code " <> show exitCode <> ".\n"
 
 writeServerOutput :: Chan J.JobMessage -> J.JobOutputType -> T.Text -> IO ()
-writeServerOutput chan outputType output =
-  writeChan chan $
-    J.JobMessage
-      { J._data = J.JobOutput output outputType,
-        J._jobType = J.Server
-      }
+writeServerOutput chan outputType output = J.writeJobOutput J.Server outputType output chan
