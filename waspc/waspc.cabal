@@ -568,6 +568,7 @@ test-suite waspc-tests
   build-depends:
     Diff ^>=0.4.1,
     aeson,
+    async,
     base,
     containers,
     deepseq,
@@ -614,6 +615,7 @@ test-suite waspc-tests
     Generator.FileDraft.TemplateFileDraftTest
     Generator.JsImportTest
     Generator.MockWriteableMonad
+    Generator.ServerGenerator.StartTest
     Generator.WriteFileDraftsTest
     Job.Process.LongRunningTest
     JsImportTest

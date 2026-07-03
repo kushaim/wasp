@@ -119,7 +119,7 @@ handleSuccessfulCompile ::
   ServerRuntimeInputChange ->
   IO ()
 handleSuccessfulCompile serverDir controller serverStateRef nextServerProcessIdRef chan serverRuntimeInputChange = do
-  markServerStoppedIfProcessExited serverStateRef chan
+  stopServerIfProcessExited serverStateRef chan
   serverState <- readIORef serverStateRef
   case (serverState, serverRuntimeInputChange) of
     (ServerRunning {}, NoServerRuntimeInputChange) -> return ()
@@ -176,27 +176,32 @@ stopServerFromStateRef serverStateRef = mask_ $ do
 -- to drain, which a leftover descendant process can hold open. Polling the
 -- exit code here makes sure a dead server is detected before we decide
 -- whether it needs a restart.
-markServerStoppedIfProcessExited :: IORef ServerProcessState -> Chan J.JobMessage -> IO ()
-markServerStoppedIfProcessExited serverStateRef chan = do
+stopServerIfProcessExited :: IORef ServerProcessState -> Chan J.JobMessage -> IO ()
+stopServerIfProcessExited serverStateRef chan = do
   serverState <- readIORef serverStateRef
   case serverState of
     ServerNotRunning -> return ()
     ServerRunning serverProcess ->
       LongRunning.getExitCode (_longRunningProcess serverProcess) >>= \case
         Nothing -> return ()
-        Just exitCode -> do
-          writeIORef serverStateRef ServerNotRunning
-          printServerProcessExit chan exitCode
+        Just exitCode -> cleanUpExitedServerProcess serverStateRef chan serverProcess exitCode
 
 handleServerProcessExited :: IORef ServerProcessState -> Chan J.JobMessage -> ServerProcessId -> ExitCode -> IO ()
 handleServerProcessExited serverStateRef chan serverProcessId exitCode = do
   serverState <- readIORef serverStateRef
   case serverState of
     ServerRunning serverProcess
-      | _serverProcessId serverProcess == serverProcessId -> do
-          writeIORef serverStateRef ServerNotRunning
-          printServerProcessExit chan exitCode
+      | _serverProcessId serverProcess == serverProcessId ->
+          cleanUpExitedServerProcess serverStateRef chan serverProcess exitCode
     _ -> return ()
+
+cleanUpExitedServerProcess :: IORef ServerProcessState -> Chan J.JobMessage -> ServerProcess -> ExitCode -> IO ()
+cleanUpExitedServerProcess serverStateRef chan serverProcess exitCode = do
+  printServerProcessExit chan exitCode
+  -- The root process exited on its own, but its descendants may have survived
+  -- and could still hold the server port or output pipes.
+  LongRunning.stop $ _longRunningProcess serverProcess
+  writeIORef serverStateRef ServerNotRunning
 
 printServerProcessExit :: Chan J.JobMessage -> ExitCode -> IO ()
 printServerProcessExit chan exitCode =
