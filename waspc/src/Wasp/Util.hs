@@ -44,6 +44,7 @@ module Wasp.Util
     secondsToMicroSeconds,
     findDuplicateElems,
     isOlderThanNHours,
+    isWindows,
     checkIfOnCi,
     -- NOTE: Exported only for testing purposes
     checkIfEnvValueIsTruthy,
@@ -74,6 +75,7 @@ import Numeric.Natural (Natural)
 import StrongPath (File, Path')
 import qualified StrongPath as SP
 import qualified System.Environment as ENV
+import qualified System.Info
 import Text.Printf (printf)
 
 camelToKebabCase :: String -> String
@@ -311,6 +313,9 @@ textToLazyBS = TLE.encodeUtf8 . TL.fromStrict
 
 secondsToMicroSeconds :: Int -> Int
 secondsToMicroSeconds = (* 1000000)
+
+isWindows :: Bool
+isWindows = System.Info.os == "mingw32"
 
 findDuplicateElems :: (Ord a) => [a] -> [a]
 findDuplicateElems = map head . filter ((> 1) . length) . group . sort

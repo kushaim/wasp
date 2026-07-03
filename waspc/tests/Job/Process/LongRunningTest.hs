@@ -5,7 +5,7 @@ import Control.Exception (finally)
 import Control.Monad (when)
 import Data.Maybe (isJust)
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
-import System.Directory (doesFileExist, removeFile)
+import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
 import System.Exit (ExitCode (..))
 import System.IO (hClose, openTempFile)
 import System.Info (os)
@@ -20,7 +20,8 @@ spec_LongRunningProcess =
     then return ()
     else describe "LongRunningProcess" $ do
       it "kills process-group descendants after the root process exits" $ do
-        (pidFilePath, pidFileHandle) <- openTempFile "/tmp" "wasp-managed-child.pid"
+        tempDir <- getTemporaryDirectory
+        (pidFilePath, pidFileHandle) <- openTempFile tempDir "wasp-long-running-child.pid"
         hClose pidFileHandle
         removeFile pidFilePath
 

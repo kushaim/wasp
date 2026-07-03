@@ -11,7 +11,7 @@ where
 import Control.Concurrent (Chan, MVar, newChan, newEmptyMVar, putMVar, readChan, takeMVar, writeChan)
 import Control.Concurrent.Async (async)
 import Control.Exception (finally, mask_)
-import Data.IORef (IORef, atomicModifyIORef', atomicWriteIORef, newIORef, readIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import qualified Data.Text as T
 import StrongPath (Abs, Dir, Path', (</>))
 import System.Exit (ExitCode (..))
@@ -63,6 +63,9 @@ startServer generatedAppDir controller =
 
 runServerProcessController :: Path' Abs (Dir ServerRootDir) -> ServerProcessController -> J.Job
 runServerProcessController serverDir controller chan = do
+  -- Only the controller thread (this one) reads and writes these refs,
+  -- including the 'finally' cleanup below. The process exit watchers spawned
+  -- in 'startServerProcess' only write commands to the controller channel.
   serverStateRef <- newIORef ServerNotRunning
   nextServerProcessIdRef <- newIORef 0
   runServerProcessControllerLoop serverDir controller serverStateRef nextServerProcessIdRef chan
@@ -116,7 +119,7 @@ handleSuccessfulCompile ::
   ServerRuntimeInputChange ->
   IO ()
 handleSuccessfulCompile serverDir controller serverStateRef nextServerProcessIdRef chan serverRuntimeInputChange = do
-  syncServerState serverStateRef chan
+  markServerStoppedIfProcessExited serverStateRef chan
   serverState <- readIORef serverStateRef
   case (serverState, serverRuntimeInputChange) of
     (ServerRunning {}, NoServerRuntimeInputChange) -> return ()
@@ -143,21 +146,21 @@ startServerProcess serverDir controller serverStateRef nextServerProcessIdRef ch
   makeNodeCommandProcessWithExtraEnv [("NODE_ENV", "development")] serverDir "npm" ["run", "start"] >>= \case
     Left errorMsg -> do
       writeServerOutput chan J.Stderr $ T.pack errorMsg
-      atomicWriteIORef serverStateRef ServerNotRunning
+      writeIORef serverStateRef ServerNotRunning
     Right serverProcess -> mask_ $ do
       serverProcessId <- getNextServerProcessId nextServerProcessIdRef
       longRunningProcess <- LongRunning.start serverProcess J.Server chan
-      atomicWriteIORef serverStateRef $ ServerRunning ServerProcess {_serverProcessId = serverProcessId, _longRunningProcess = longRunningProcess}
+      writeIORef serverStateRef $ ServerRunning ServerProcess {_serverProcessId = serverProcessId, _longRunningProcess = longRunningProcess}
       _ <- async $ do
         exitCode <- LongRunning.wait longRunningProcess
         writeServerControllerCommand controller $ ServerProcessExited serverProcessId exitCode
       return ()
 
 getNextServerProcessId :: IORef Int -> IO ServerProcessId
-getNextServerProcessId nextServerProcessIdRef =
-  atomicModifyIORef' nextServerProcessIdRef $ \serverProcessId ->
-    let nextServerProcessId = serverProcessId + 1
-     in (nextServerProcessId, ServerProcessId nextServerProcessId)
+getNextServerProcessId nextServerProcessIdRef = do
+  nextServerProcessId <- (+ 1) <$> readIORef nextServerProcessIdRef
+  writeIORef nextServerProcessIdRef nextServerProcessId
+  return $ ServerProcessId nextServerProcessId
 
 stopServerFromStateRef :: IORef ServerProcessState -> IO ()
 stopServerFromStateRef serverStateRef = mask_ $ do
@@ -166,10 +169,15 @@ stopServerFromStateRef serverStateRef = mask_ $ do
     ServerNotRunning -> return ()
     ServerRunning serverProcess -> do
       LongRunning.stop $ _longRunningProcess serverProcess
-      atomicWriteIORef serverStateRef ServerNotRunning
+      writeIORef serverStateRef ServerNotRunning
 
-syncServerState :: IORef ServerProcessState -> Chan J.JobMessage -> IO ()
-syncServerState serverStateRef chan = do
+-- Exits are usually reported through the 'ServerProcessExited' command, but
+-- that can be delayed indefinitely: 'LongRunning.wait' also waits for output
+-- to drain, which a leftover descendant process can hold open. Polling the
+-- exit code here makes sure a dead server is detected before we decide
+-- whether it needs a restart.
+markServerStoppedIfProcessExited :: IORef ServerProcessState -> Chan J.JobMessage -> IO ()
+markServerStoppedIfProcessExited serverStateRef chan = do
   serverState <- readIORef serverStateRef
   case serverState of
     ServerNotRunning -> return ()
@@ -177,7 +185,7 @@ syncServerState serverStateRef chan = do
       LongRunning.getExitCode (_longRunningProcess serverProcess) >>= \case
         Nothing -> return ()
         Just exitCode -> do
-          atomicWriteIORef serverStateRef ServerNotRunning
+          writeIORef serverStateRef ServerNotRunning
           printServerProcessExit chan exitCode
 
 handleServerProcessExited :: IORef ServerProcessState -> Chan J.JobMessage -> ServerProcessId -> ExitCode -> IO ()
@@ -186,7 +194,7 @@ handleServerProcessExited serverStateRef chan serverProcessId exitCode = do
   case serverState of
     ServerRunning serverProcess
       | _serverProcessId serverProcess == serverProcessId -> do
-          atomicWriteIORef serverStateRef ServerNotRunning
+          writeIORef serverStateRef ServerNotRunning
           printServerProcessExit chan exitCode
     _ -> return ()
 

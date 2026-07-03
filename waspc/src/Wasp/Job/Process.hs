@@ -10,10 +10,10 @@ import Data.Conduit (runConduit, (.|))
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Process as CP
 import Data.Text.Encoding (decodeUtf8)
-import qualified System.Info
 import qualified System.Process as P
 import UnliftIO.Exception (bracket)
 import qualified Wasp.Job as J
+import Wasp.Util (isWindows)
 
 -- TODO:
 --   Switch from Data.Conduit.Process to Data.Conduit.Process.Typed.
@@ -72,7 +72,7 @@ runProcessAndStreamOutput process jobType chan =
       -- exited. On Windows, interruptProcessGroupOf requires create_group=True, which
       -- this generic runner intentionally avoids because some top-level jobs inherit
       -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.LongRunning instead.
-      if System.Info.os == "mingw32"
+      if isWindows
         then
           P.getProcessExitCode processHandle >>= \case
             Just _ -> return ()

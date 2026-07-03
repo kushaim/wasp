@@ -47,6 +47,10 @@ projectServerRuntimeInputFileGlobs =
   compileGlobPatterns $
     recursiveFileGlobsWithExtensions projectSrcDir serverRuntimeInputFileExtensions
 
+-- SDK changes ('sdk/wasp/...') are deliberately not treated as server runtime
+-- inputs, even though the server bundle includes the SDK. We assume every
+-- server-relevant SDK regeneration comes with a change to the generated
+-- server src or the user's src.
 generatedServerRuntimeInputFileGlobs :: GlobPatterns
 generatedServerRuntimeInputFileGlobs =
   compileGlobPatterns $
