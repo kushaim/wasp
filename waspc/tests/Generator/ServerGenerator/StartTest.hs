@@ -5,6 +5,7 @@ import Control.Concurrent.Async (cancel, withAsync)
 import Control.Exception (SomeException, finally, try)
 import Control.Monad (void, when)
 import Job.Process.LongRunningTest (isProcessAlive, makeTempPath, trim, waitUntil)
+import qualified StrongPath as SP
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeDirectoryRecursive, removeFile)
 import System.Exit (ExitCode)
 import System.FilePath ((</>))
@@ -22,7 +23,6 @@ import Wasp.Generator.ServerGenerator.Start
     notifySuccessfulCompile,
     startServer,
   )
-import qualified StrongPath as SP
 import Wasp.Util (secondsToMicroSeconds)
 
 spec_ServerProcessController :: Spec
