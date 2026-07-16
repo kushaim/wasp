@@ -1,0 +1,170 @@
+[
+  {
+    "name": "Separate root exit, output drain, and process-tree quiescence on POSIX",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Wait for full process-tree termination and port release before replacement on POSIX",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Use direct Node root with a single-source server launch specification",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Implement POSIX process-group liveness backend",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Implement Windows job backend with independent root monitoring",
+    "status": "pending",
+    "priority": "P0",
+    "decision": "defer"
+  },
+  {
+    "name": "Make Linux ARM lifecycle fixtures deterministic and zombie-safe",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Enable and pass Windows lifecycle tests",
+    "status": "pending",
+    "priority": "P0",
+    "decision": "defer"
+  },
+  {
+    "name": "Add server port bind and rebind lifecycle test",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Introduce minimal composable ServerEffect algebra while preserving current watch parity",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Cover npm, SDK, Prisma, config, and JSX-family server invalidation",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Emit compiler-owned ProjectInputManifest",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Start watcher before initial compile and reconcile queued revisions",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Add lockfile fingerprint to npm install state",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Implement revisioned latest-wins build scheduler",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Publish diagnostics before blocking lifecycle work",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Preserve CLI SIGINT and SIGTERM exit status",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Make process streaming resource-safe and decode UTF-8 incrementally",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Make long-running teardown idempotent, fail-closed, and zombie-aware on Linux",
+    "status": "completed",
+    "priority": "P0",
+    "decision": "do_now"
+  },
+  {
+    "name": "Replace blocking controller with scoped explicit lifecycle API",
+    "status": "pending",
+    "priority": "P1",
+    "decision": "defer"
+  },
+  {
+    "name": "Define noninteractive stdin contract for isolated long-running dev processes",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Contain truly detached child processes",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Split build into incremental phase DAG",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Remove repeated Node and npm checks from low-level Node jobs",
+    "status": "completed",
+    "priority": "P2",
+    "decision": "do_now"
+  },
+  {
+    "name": "Introduce reusable ValidatedNodeEnvironment capability",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Replace Job aliases with distinct types if migration remains low churn",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "conditional"
+  },
+  {
+    "name": "Remove stale generated-server Nodemon lock entries and isolate unrelated churn",
+    "status": "completed",
+    "priority": "P1",
+    "decision": "do_now"
+  },
+  {
+    "name": "Investigate macOS ARM generated-bundle snapshot instability",
+    "status": "pending",
+    "priority": "P2",
+    "decision": "defer"
+  },
+  {
+    "name": "Run full CI matrix after lifecycle and invalidation fixes",
+    "status": "pending",
+    "priority": "P0",
+    "decision": "do_now"
+  }
+]

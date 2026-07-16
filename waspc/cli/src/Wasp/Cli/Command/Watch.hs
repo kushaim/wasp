@@ -90,9 +90,7 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
           -- Recompile, but only after a 1s period of no new events.
           fileChanges <- collectFileChangesUntilQuiet chan lastCompileTime 1 event
           currentTime <- getCurrentTime
-          compileResult <- recompile fileChanges
-          let (warnings, errors) = compileResultWarningsAndErrors compileResult
-          updateOngoingCompilationResultMVar (warnings, errors)
+          recompile fileChanges
           listenForEvents chan currentTime
 
     updateOngoingCompilationResultMVar :: ([CompileWarning], [CompileError]) -> IO ()
@@ -134,7 +132,7 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
       let microsecondsInASecond = 1000000
        in threadDelay . (* microsecondsInASecond)
 
-    recompile :: [ProjectFileChange] -> IO CompileResult
+    recompile :: [ProjectFileChange] -> IO ()
     recompile fileChanges = do
       cliSendMessage $ Msg.Start "Recompiling on file change..."
       compileResult <- compileIO waspProjectDir outDir
@@ -147,12 +145,14 @@ watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks = FSN
                 _watchCompileResult = compileResult
               }
       if null errors
-        then _onSuccessfulCompile watchCompileHooks watchCompileResult
-        else
+        then do
+          updateOngoingCompilationResultMVar (warnings, errors)
+          _onSuccessfulCompile watchCompileHooks watchCompileResult
+        else do
           cliSendMessage (Msg.Failure "Recompilation on file change failed." $ show (length errors) ++ " errors found")
-            >> _onFailedCompile watchCompileHooks watchCompileResult
+          updateOngoingCompilationResultMVar (warnings, errors)
+          _onFailedCompile watchCompileHooks watchCompileResult
 
-      return compileResult
     -- TODO: This is a hardcoded approach to ignoring most of the common tmp files that editors
     --   create next to the source code. Bad thing here is that users can't modify this,
     --   so better approach would be probably to use information from .gitignore instead, or

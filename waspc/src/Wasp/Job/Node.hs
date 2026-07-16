@@ -6,15 +6,12 @@ module Wasp.Job.Node
   )
 where
 
-import qualified Data.Text as T
 import StrongPath (Abs, Dir, Path')
 import qualified StrongPath as SP
 import System.Environment (getEnvironment)
-import System.Exit (ExitCode (..))
 import qualified System.Process as P
 import qualified Wasp.Job as J
 import Wasp.Job.Process (runProcessAndStreamOutput)
-import qualified Wasp.Node.Version as NodeVersion
 
 runNodeCommandAsJob :: Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.Job
 runNodeCommandAsJob = runNodeCommandAsJobWithExtraEnv []
@@ -25,23 +22,17 @@ runNodeCommandAsJobWithExtraEnv extraEnvVars fromDir command args jobType =
     runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType
 
 runNodeCommandAndStreamOutputWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> J.JobType -> J.JobOutputStreamer
-runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType chan =
-  makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args >>= \case
-    Left errorMsg -> writeErrorOutput (ExitFailure 1) (T.pack errorMsg)
-    Right nodeCommandProcess -> runProcessAndStreamOutput nodeCommandProcess jobType chan
-  where
-    writeErrorOutput exitCode errorMsg = do
-      J.writeJobOutput jobType J.Stderr errorMsg chan
-      return exitCode
+runNodeCommandAndStreamOutputWithExtraEnv extraEnvVars fromDir command args jobType chan = do
+  nodeCommandProcess <- makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args
+  runProcessAndStreamOutput nodeCommandProcess jobType chan
 
-makeNodeCommandProcessWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> IO (Either String P.CreateProcess)
-makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args =
-  NodeVersion.checkUserNodeAndNpmMeetWaspRequirements >>= \case
-    NodeVersion.VersionCheckFail errorMsg -> return $ Left errorMsg
-    NodeVersion.VersionCheckSuccess -> do
-      envVars <- getAllEnvVars
-      let nodeCommandProcess = (P.proc command args) {P.env = Just envVars, P.cwd = Just $ SP.fromAbsDir fromDir}
-      return $ Right nodeCommandProcess
+-- Node and npm are validated once at CLI command boundaries.
+-- TODO: Pass that validation as a capability into this IO layer.
+-- Rechecking here added four version subprocesses per server restart.
+makeNodeCommandProcessWithExtraEnv :: [(String, String)] -> Path' Abs (Dir a) -> String -> [String] -> IO P.CreateProcess
+makeNodeCommandProcessWithExtraEnv extraEnvVars fromDir command args = do
+  envVars <- getAllEnvVars
+  return $ (P.proc command args) {P.env = Just envVars, P.cwd = Just $ SP.fromAbsDir fromDir}
   where
     -- Haskell will use the first value for variable name it finds. Since env
     -- vars in 'extraEnvVars' should override the inherited env vars, we

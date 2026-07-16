@@ -138,6 +138,7 @@ genPackageJson spec waspDependencies =
             [ "packageName" .= serverPackageName,
               "depsChunk" .= N.getDependenciesPackageJsonEntry serverDeps,
               "devDepsChunk" .= N.getDevDependenciesPackageJsonEntry serverDeps,
+              "devServerStartCommand" .= C.devServerStartCommand,
               "nodeVersionRange" .= (">=" <> show NodeVersion.oldestWaspSupportedNodeVersion),
               "startProductionScript"
                 .= ( (if hasEntities then "npm run db-migrate-prod && " else "")

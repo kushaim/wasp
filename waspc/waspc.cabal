@@ -161,6 +161,10 @@ library
     utf8-string ^>=1.0.2,
     validation-selective ^>=0.2.0,
 
+  if !os(windows)
+    build-depends:
+      unix
+
   other-modules: Paths_waspc
   exposed-modules:
     Wasp.Analyzer
@@ -680,9 +684,14 @@ test-suite wasp-cli-tests
     time,
     waspc,
 
+  if !os(windows)
+    build-depends:
+      unix
+
   other-modules:
     DbMigrateTest
     Paths_waspc
+    SignalHandlingTest
     TerminalTest
     Wasp.Cli.Command.News.ListingTest
     Wasp.Cli.Command.News.LocalNewsStateTest

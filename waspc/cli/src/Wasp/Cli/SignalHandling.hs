@@ -5,10 +5,11 @@ module Wasp.Cli.SignalHandling
   )
 where
 
-import Control.Concurrent (myThreadId)
-import Control.Exception (AsyncException (UserInterrupt), bracket, throwTo)
-
 #if !mingw32_HOST_OS
+import Control.Concurrent (myThreadId)
+import Control.Exception (bracket, throwTo)
+import Control.Monad (void)
+import System.Exit (ExitCode (ExitFailure))
 import qualified System.Posix.Signals as Signals
 #endif
 
@@ -18,17 +19,13 @@ withGracefulTermination = id
 #else
 withGracefulTermination action = do
   targetThreadId <- myThreadId
-  let interruptCurrentCommand = Signals.Catch $ throwTo targetThreadId UserInterrupt
-  bracket
-    (mapM (installHandler interruptCurrentCommand) [Signals.sigINT, Signals.sigTERM])
-    restoreHandlers
-    (const action)
+  let withTerminationHandler signal innerAction =
+        bracket
+          (Signals.installHandler signal (Signals.Catch $ throwTo targetThreadId $ exitCodeForSignal signal) Nothing)
+          (\previousHandler -> void $ Signals.installHandler signal previousHandler Nothing)
+          (const innerAction)
+  withTerminationHandler Signals.sigINT $
+    withTerminationHandler Signals.sigTERM action
   where
-    installHandler handler signal = do
-      previousHandler <- Signals.installHandler signal handler Nothing
-      return (signal, previousHandler)
-
-    restoreHandlers =
-      mapM_ $ \(signal, previousHandler) ->
-        Signals.installHandler signal previousHandler Nothing
+    exitCodeForSignal signal = ExitFailure $ 128 + fromIntegral signal
 #endif

@@ -8,11 +8,10 @@ import Control.Concurrent.Async (Concurrently (..))
 import Data.Conduit (runConduit, (.|))
 import qualified Data.Conduit.List as CL
 import qualified Data.Conduit.Process as CP
-import Data.Text.Encoding (decodeUtf8)
+import qualified Data.Conduit.Text as CT
 import qualified System.Process as P
-import UnliftIO.Exception (bracket)
+import UnliftIO.Exception (bracket, finally)
 import qualified Wasp.Job as J
-import Wasp.Util (isWindows)
 
 -- TODO:
 --   Switch from Data.Conduit.Process to Data.Conduit.Process.Typed.
@@ -29,35 +28,32 @@ runProcessAndStreamOutput :: P.CreateProcess -> J.JobType -> J.JobOutputStreamer
 runProcessAndStreamOutput process jobType chan =
   bracket
     (CP.streamingProcess process)
-    (\(_, _, _, sph) -> terminateStreamingProcess sph)
+    cleanUpStreamingProcess
     runStreamingProcessAndStreamOutput
   where
+    cleanUpStreamingProcess (_, _, _, streamingProcessHandle) =
+      terminateStreamingProcess streamingProcessHandle
+        `finally` CP.closeStreamingProcessHandle streamingProcessHandle
+
     runStreamingProcessAndStreamOutput (CP.Inherited, stdoutStream, stderrStream, processHandle) = do
       let forwardStdoutToChan =
             runConduit $
-              stdoutStream .| CL.mapM_ (\bs -> J.writeJobOutput jobType J.Stdout (decodeUtf8 bs) chan)
+              stdoutStream .| CT.decodeUtf8Lenient .| CL.mapM_ (\text -> J.writeJobOutput jobType J.Stdout text chan)
 
       let forwardStderrToChan =
             runConduit $
-              stderrStream .| CL.mapM_ (\bs -> J.writeJobOutput jobType J.Stderr (decodeUtf8 bs) chan)
+              stderrStream .| CT.decodeUtf8Lenient .| CL.mapM_ (\text -> J.writeJobOutput jobType J.Stderr text chan)
 
       runConcurrently $
         Concurrently forwardStdoutToChan
           *> Concurrently forwardStderrToChan
           *> Concurrently (CP.waitForStreamingProcess processHandle)
 
+    -- This generic runner does not create a process group, so it owns only the
+    -- root process. Group cleanup belongs to LongRunning, which creates one.
     terminateStreamingProcess :: CP.StreamingProcessHandle -> IO ()
     terminateStreamingProcess streamingProcessHandle = do
       let processHandle = CP.streamingProcessHandleRaw streamingProcessHandle
-      -- Many commands we run spawn child processes, which can spawn their own children.
-      -- On Unix, interrupting the process group preserves the existing cleanup policy
-      -- better than terminating only the root process, even if the root process already
-      -- exited. On Windows, interruptProcessGroupOf requires create_group=True, which
-      -- this generic runner intentionally avoids because some top-level jobs inherit
-      -- stdin. Wasp-owned long-running children should use Wasp.Job.Process.LongRunning instead.
-      if isWindows
-        then
-          P.getProcessExitCode processHandle >>= \case
-            Just _ -> return ()
-            Nothing -> P.terminateProcess processHandle
-        else P.interruptProcessGroupOf processHandle
+      CP.getStreamingProcessExitCode streamingProcessHandle >>= \case
+        Just _ -> return ()
+        Nothing -> P.terminateProcess processHandle

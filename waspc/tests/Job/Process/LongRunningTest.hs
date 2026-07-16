@@ -1,8 +1,9 @@
 module Job.Process.LongRunningTest where
 
 import Control.Concurrent (Chan, newChan, readChan, threadDelay)
+import qualified Control.Concurrent.Async as Async
 import Control.Exception (finally)
-import Control.Monad (when)
+import Control.Monad (void, when)
 import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
@@ -12,49 +13,68 @@ import System.IO (hClose, openTempFile)
 import System.Info (os)
 import qualified System.Process as P
 import System.Timeout (timeout)
-import Test.Hspec (Spec, describe, expectationFailure, it, shouldBe, shouldReturn, shouldSatisfy)
+import Test.Hspec (Spec, describe, expectationFailure, it, pendingWith, shouldBe, shouldReturn, shouldSatisfy)
 import qualified Wasp.Job as J
+import qualified Wasp.Job.Process as Process
 import qualified Wasp.Job.Process.LongRunning as LongRunning
 import Wasp.Util (secondsToMicroSeconds)
 
+spec_Process :: Spec
+spec_Process =
+  describe "runProcessAndStreamOutput" $ do
+    it "decodes split and incomplete UTF-8 on stdout" $
+      runSplitUtf8Process "stdout" `shouldReturn` "€�"
+
+    it "decodes split and incomplete UTF-8 on stderr" $
+      runSplitUtf8Process "stderr" `shouldReturn` "€�"
+
 spec_LongRunningProcess :: Spec
 spec_LongRunningProcess =
-  if os == "mingw32"
-    then return ()
-    else describe "LongRunningProcess" $ do
-      it "kills process-group descendants after the root process exits" $ do
-        pidFilePath <- makeTempPath "wasp-long-running-child.pid"
-        chan <- newChan
-        longRunningProcess <- LongRunning.start (P.proc "sh" ["-c", childProcessScript pidFilePath]) J.Server chan
-        let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists pidFilePath
-        ( do
-            waitUntil "child pid file" $ doesFileExist pidFilePath
-            childPid <- readFile pidFilePath
-            waitUntil "root process exit" $ isJust <$> LongRunning.getExitCode longRunningProcess
-            isProcessAlive childPid `shouldReturn` True
+  describe "LongRunningProcess" $ do
+    it "stops an owned process tree when a Job is cancelled" $ do
+      portFilePath <- makeTempPath "wasp-long-running-job-port"
+      chan <- newChan
+      let job = LongRunning.runAsJob (nodeScript $ portOwningChildProcessScript portFilePath) J.WebApp chan
+      ( Async.withAsync job $ \jobAsync -> do
+          waitUntil "job child port file" $ doesFileExist portFilePath
+          port <- readFile portFilePath
+          isPortAvailable port `shouldReturn` False
 
-            startedAt <- getCurrentTime
-            LongRunning.stop longRunningProcess
-            stoppedAt <- getCurrentTime
+          Async.cancel jobAsync
 
-            realToFrac (stoppedAt `diffUTCTime` startedAt) `shouldSatisfy` (< maxAcceptableStopSeconds)
-            waitUntil "child process exit" $ not <$> isProcessAlive childPid
-          )
-          `finally` cleanup
+          isPortAvailable port `shouldReturn` True
+        )
+        `finally` removeFileIfExists portFilePath
 
+    it "kills process-group descendants after the root process exits" $ do
+      when (os == "mingw32") $ pendingWith "Independent root monitoring on Windows is deferred."
+      portFilePath <- makeTempPath "wasp-long-running-child-port"
+      chan <- newChan
+      longRunningProcess <- LongRunning.start (nodeScript $ exitingRootWithPortOwningChildScript portFilePath) J.Server chan
+      let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists portFilePath
+      ( do
+          waitUntil "child port file" $ doesFileExist portFilePath
+          port <- readFile portFilePath
+          maybeRootExit <- timeout (secondsToMicroSeconds 5) $ LongRunning.waitForRootExit longRunningProcess
+          maybeRootExit `shouldBe` Just ExitSuccess
+          LongRunning.pollRootExit longRunningProcess `shouldReturn` Just ExitSuccess
+          isPortAvailable port `shouldReturn` False
+
+          startedAt <- getCurrentTime
+          LongRunning.stop longRunningProcess
+          stoppedAt <- getCurrentTime
+
+          realToFrac (stoppedAt `diffUTCTime` startedAt) `shouldSatisfy` (< maxAcceptableStopSeconds)
+          isPortAvailable port `shouldReturn` True
+        )
+        `finally` cleanup
+
+    when (os /= "mingw32") $
       it "interrupts the process so it can exit gracefully before being killed" $ do
         startedFilePath <- makeTempPath "wasp-long-running-started"
         gracefulExitFilePath <- makeTempPath "wasp-long-running-graceful-exit"
         chan <- newChan
-        let script =
-              "trap 'echo done > "
-                <> shellQuote gracefulExitFilePath
-                <> "; exit 0' INT; "
-                <> "echo started > "
-                <> shellQuote startedFilePath
-                <> "; "
-                <> "while true; do sleep 0.05; done"
-        longRunningProcess <- LongRunning.start (P.proc "sh" ["-c", script]) J.Server chan
+        longRunningProcess <- LongRunning.start (nodeScript $ gracefulProcessScript startedFilePath gracefulExitFilePath) J.Server chan
         let cleanup =
               LongRunning.stop longRunningProcess
                 >> mapM_ removeFileIfExists [startedFilePath, gracefulExitFilePath]
@@ -65,61 +85,130 @@ spec_LongRunningProcess =
           )
           `finally` cleanup
 
-      it "kills a process that ignores INT" $ do
-        startedFilePath <- makeTempPath "wasp-long-running-stubborn"
-        chan <- newChan
-        let script =
-              "trap '' INT TERM; "
-                <> "echo started > "
-                <> shellQuote startedFilePath
-                <> "; "
-                <> "while true; do sleep 0.1; done"
-        longRunningProcess <- LongRunning.start (P.proc "sh" ["-c", script]) J.Server chan
-        let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists startedFilePath
-        ( do
-            waitUntil "process start" $ doesFileExist startedFilePath
-            startedAt <- getCurrentTime
-            LongRunning.stop longRunningProcess
-            stoppedAt <- getCurrentTime
-            realToFrac (stoppedAt `diffUTCTime` startedAt) `shouldSatisfy` (< maxAcceptableStopSeconds)
-            waitUntil "root process exit" $ isJust <$> LongRunning.getExitCode longRunningProcess
-          )
-          `finally` cleanup
+    it "kills a process that ignores graceful stop signals" $ do
+      startedFilePath <- makeTempPath "wasp-long-running-stubborn"
+      chan <- newChan
+      longRunningProcess <- LongRunning.start (nodeScript $ stubbornProcessScript startedFilePath) J.Server chan
+      let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists startedFilePath
+      ( do
+          waitUntil "process start" $ doesFileExist startedFilePath
+          startedAt <- getCurrentTime
+          LongRunning.stop longRunningProcess
+          stoppedAt <- getCurrentTime
+          realToFrac (stoppedAt `diffUTCTime` startedAt) `shouldSatisfy` (< maxAcceptableStopSeconds)
+          maybeRootExit <- timeout (secondsToMicroSeconds 5) $ LongRunning.waitForRootExit longRunningProcess
+          maybeRootExit `shouldSatisfy` isJust
+        )
+        `finally` cleanup
 
-      it "forwards all output when chunks split multibyte characters" $ do
-        chan <- newChan
-        let euroSignCount = 40000 :: Int
-        -- The euro sign is 3 bytes in UTF-8 (octal 342 202 254), so fixed-size
-        -- read chunks can't align with character boundaries.
-        let script =
-              "awk 'BEGIN { for (i = 0; i < "
-                <> show euroSignCount
-                <> "; i++) printf \"\\342\\202\\254\" }'"
-        longRunningProcess <- LongRunning.start (P.proc "sh" ["-c", script]) J.Server chan
-        maybeExitCode <- timeout (secondsToMicroSeconds 20) $ LongRunning.wait longRunningProcess
-        case maybeExitCode of
-          Nothing -> do
-            LongRunning.stop longRunningProcess
-            expectationFailure "Timed out waiting for process exit; output forwarding likely stalled"
-          Just exitCode -> do
-            exitCode `shouldBe` ExitSuccess
-            output <- collectQueuedOutput chan
-            T.length output `shouldBe` euroSignCount
-            T.all (== '€') output `shouldBe` True
+    it "releases a descendant-owned port before stop returns" $ do
+      portFilePath <- makeTempPath "wasp-long-running-port"
+      chan <- newChan
+      longRunningProcess <- LongRunning.start (nodeScript $ portOwningChildProcessScript portFilePath) J.Server chan
+      let cleanup = LongRunning.stop longRunningProcess >> removeFileIfExists portFilePath
+      ( do
+          waitUntil "child-owned port" $ doesFileExist portFilePath
+          port <- readFile portFilePath
+          isPortAvailable port `shouldReturn` False
 
--- Covers the graceful stop timeout, the KILL escalation, and polling slack.
+          LongRunning.stop longRunningProcess
+
+          isPortAvailable port `shouldReturn` True
+        )
+        `finally` cleanup
+
+    it "decodes chunk-split and incomplete UTF-8 output" $ do
+      chan <- newChan
+      let euroSignCount = 40000 :: Int
+      let expectedOutput = T.replicate euroSignCount "€" <> "�"
+      let script =
+            "process.stdout.write(Buffer.concat([Buffer.from('€'.repeat("
+              <> show euroSignCount
+              <> ")), Buffer.from([0xe2])]));"
+      longRunningProcess <- LongRunning.start (nodeScript script) J.Server chan
+      maybeExitCode <- timeout (secondsToMicroSeconds 20) $ LongRunning.waitForRootExit longRunningProcess
+      case maybeExitCode of
+        Nothing -> do
+          LongRunning.stop longRunningProcess
+          expectationFailure "Timed out waiting for process exit; output forwarding likely stalled"
+        Just exitCode -> do
+          exitCode `shouldBe` ExitSuccess
+          LongRunning.stop longRunningProcess
+          output <- collectQueuedOutput chan
+          output `shouldBe` expectedOutput
+
+-- Covers graceful stop, hard-stop escalation, and polling slack.
 maxAcceptableStopSeconds :: Double
 maxAcceptableStopSeconds = 2
 
-childProcessScript :: FilePath -> String
-childProcessScript pidFilePath =
-  "trap '' INT; "
-    <> "(trap '' INT; while true; do sleep 1; done) & "
-    <> "echo $! > "
-    <> shellQuote pidFilePath
-    <> "; "
-    <> "sleep 0.2; "
-    <> "exit 0"
+nodeScript :: String -> P.CreateProcess
+nodeScript script = P.proc "node" ["-e", script]
+
+runSplitUtf8Process :: String -> IO T.Text
+runSplitUtf8Process streamName = do
+  chan <- newChan
+  exitCode <- Process.runProcessAndStreamOutput (nodeScript $ splitUtf8Script streamName) J.Wasp chan
+  exitCode `shouldBe` ExitSuccess
+  collectQueuedOutput chan
+
+splitUtf8Script :: String -> String
+splitUtf8Script streamName =
+  "process."
+    <> streamName
+    <> ".write(Buffer.from([0xe2])); setTimeout(() => process."
+    <> streamName
+    <> ".write(Buffer.from([0x82, 0xac, 0xe2])), 200);"
+
+exitingRootWithPortOwningChildScript :: FilePath -> String
+exitingRootWithPortOwningChildScript portFilePath =
+  unlines
+    [ "const { spawn } = require('node:child_process');",
+      "const childScript = " <> jsString portOwningChildScript <> ";",
+      "spawn(process.execPath, ['-e', childScript, " <> jsString portFilePath <> "], { stdio: 'inherit' });",
+      "setTimeout(() => process.exit(0), 200);"
+    ]
+
+gracefulProcessScript :: FilePath -> FilePath -> String
+gracefulProcessScript startedFilePath gracefulExitFilePath =
+  unlines
+    [ "const fs = require('node:fs');",
+      "fs.writeFileSync(" <> jsString startedFilePath <> ", 'started');",
+      "process.on('SIGINT', () => {",
+      "  fs.writeFileSync(" <> jsString gracefulExitFilePath <> ", 'done');",
+      "  process.exit(0);",
+      "});",
+      "setInterval(() => {}, 1000);"
+    ]
+
+stubbornProcessScript :: FilePath -> String
+stubbornProcessScript startedFilePath =
+  unlines
+    [ "const fs = require('node:fs');",
+      "fs.writeFileSync(" <> jsString startedFilePath <> ", 'started');",
+      "process.on('SIGINT', () => {});",
+      "process.on('SIGTERM', () => {});",
+      "setInterval(() => {}, 1000);"
+    ]
+
+portOwningChildProcessScript :: FilePath -> String
+portOwningChildProcessScript portFilePath =
+  unlines
+    [ "const { spawn } = require('node:child_process');",
+      "const childScript = " <> jsString portOwningChildScript <> ";",
+      "spawn(process.execPath, ['-e', childScript, " <> jsString portFilePath <> "], { stdio: 'inherit' });",
+      "process.on('SIGINT', () => process.exit(0));",
+      "setInterval(() => {}, 1000);"
+    ]
+
+portOwningChildScript :: String
+portOwningChildScript =
+  unlines
+    [ "const fs = require('node:fs');",
+      "const net = require('node:net');",
+      "process.on('SIGINT', () => {});",
+      "const server = net.createServer();",
+      "server.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[1], String(server.address().port)));"
+    ]
 
 collectQueuedOutput :: Chan J.JobMessage -> IO T.Text
 collectQueuedOutput chan = go []
@@ -139,11 +228,42 @@ makeTempPath nameTemplate = do
   removeFile filePath
   return filePath
 
-shellQuote :: String -> String
-shellQuote value = "'" <> concatMap quoteChar value <> "'"
+isProcessAlive :: String -> IO Bool
+isProcessAlive pid = do
+  (exitCode, _, _) <-
+    P.readCreateProcessWithExitCode
+      (P.proc "node" ["-e", "try { process.kill(Number(process.argv[1]), 0); } catch { process.exit(1); }", trim pid])
+      ""
+  return $ exitCode == ExitSuccess
+
+killProcess :: String -> IO ()
+killProcess pid =
+  void $
+    P.readCreateProcessWithExitCode
+      (P.proc "node" ["-e", "try { process.kill(Number(process.argv[1]), 'SIGKILL'); } catch {}", trim pid])
+      ""
+
+isPortAvailable :: String -> IO Bool
+isPortAvailable port = do
+  (exitCode, _, _) <-
+    P.readCreateProcessWithExitCode
+      (P.proc "node" ["-e", portProbeScript, trim port])
+      ""
+  return $ exitCode == ExitSuccess
   where
-    quoteChar '\'' = "'\\''"
-    quoteChar char = [char]
+    portProbeScript =
+      unlines
+        [ "const net = require('node:net');",
+          "const server = net.createServer();",
+          "server.once('error', () => process.exit(1));",
+          "server.listen(Number(process.argv[1]), '127.0.0.1', () => server.close(() => process.exit(0)));"
+        ]
+
+jsString :: String -> String
+jsString = show
+
+trim :: String -> String
+trim = unwords . words
 
 waitUntil :: String -> IO Bool -> IO ()
 waitUntil label condition = go (50 :: Int)
@@ -157,14 +277,6 @@ waitUntil label condition = go (50 :: Int)
             else do
               threadDelay 100000
               go $ remainingAttempts - 1
-
-isProcessAlive :: String -> IO Bool
-isProcessAlive pid = do
-  (exitCode, _, _) <- P.readCreateProcessWithExitCode (P.proc "kill" ["-0", trim pid]) ""
-  return $ exitCode == ExitSuccess
-
-trim :: String -> String
-trim = unwords . words
 
 removeFileIfExists :: FilePath -> IO ()
 removeFileIfExists filePath = do

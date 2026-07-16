@@ -14,7 +14,7 @@ import Wasp.Cli.Command.Compile (compile, printWarningsAndErrorsIfAny)
 import Wasp.Cli.Command.Message (cliSendMessageC)
 import Wasp.Cli.Command.News (fetchAndListMustSeeNewsIfDue)
 import Wasp.Cli.Command.Require (DbConnectionEstablished (DbConnectionEstablished), InWaspProject (InWaspProject), require)
-import Wasp.Cli.Command.Start.ServerRuntimeInputChange (classifyServerRuntimeInputChange)
+import Wasp.Cli.Command.Start.ServerRuntimeInputChange (classifyServerEffect)
 import Wasp.Cli.Command.Watch (WatchCompileHooks (..), watch)
 import Wasp.Cli.Message (cliSendMessage)
 import qualified Wasp.Cli.SignalHandling as SignalHandling
@@ -62,10 +62,10 @@ start = do
     let watchCompileHooks =
           WatchCompileHooks
             { _onSuccessfulCompile = \watchCompileResult -> do
-                let serverRuntimeInputChange = classifyServerRuntimeInputChange watchCompileResult
-                when (serverRuntimeInputChange == ServerGenerator.Start.ServerRuntimeInputMightHaveChanged) $
+                let serverEffect = classifyServerEffect watchCompileResult
+                when (serverEffect /= ServerGenerator.Start.NoServerEffect) $
                   cliSendMessage (Msg.Start "Updating server...")
-                ServerGenerator.Start.notifySuccessfulCompile serverProcessController serverRuntimeInputChange,
+                ServerGenerator.Start.notifySuccessfulCompile serverProcessController serverEffect,
               _onFailedCompile = const $ ServerGenerator.Start.notifyFailedCompile serverProcessController
             }
     let watchWaspProjectSource = watch waspProjectDir outDir ongoingCompilationResultMVar watchCompileHooks
