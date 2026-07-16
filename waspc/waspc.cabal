@@ -164,7 +164,6 @@ library
   if !os(windows)
     build-depends:
       unix
-
   other-modules: Paths_waspc
   exposed-modules:
     Wasp.Analyzer
@@ -687,7 +686,6 @@ test-suite wasp-cli-tests
   if !os(windows)
     build-depends:
       unix
-
   other-modules:
     DbMigrateTest
     Paths_waspc
